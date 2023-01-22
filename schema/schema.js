@@ -1,187 +1,115 @@
-const graphql = require('graphql');
-
 const User = require('../models/User');
 const Task = require('../models/Task');
 
-const {
-    GraphQLObjectType,
-    GraphQLString,
-    GraphQLSchema,
-    GraphQLID,
-    GraphQLEnumType,
-    GraphQLList,
-    GraphQLNonNull
-} = graphql;
+const typeDefs = `
+    enum Role {
+        MASTER
+        SLAVE
+    }  
+    enum TaskState {
+        TODO
+        PROGRESS
+        DONE
+        PAUSE   
+    }
+    type User {
+        id:ID!
+        username: String!
+        login: String!
+        password: String!
+        role: Role!
+    }
+    type Task {
+        id:ID!
+        title: String!
+        description: String!
+        due: String!
+        status: TaskState
+        from: User
+        to: User
+    }
 
+    type Query {
+        user(id: ID!): User
+        users:[User]!
+        task(id: ID!): Task
+        tasks:[Task]!
+        myTasks: Task
+    }
 
-const TaskStateEnumType = new GraphQLEnumType({
-    name: 'TaskStateEnum',
-    values: {
-        TODO: {value: 'todo'},
-        PROGRESS: {value: 'progress' },
-        DONE: { value: 'done' },
-        PAUSE: { value: 'pause' }
+    type Mutation {
+        addUser(input: AddUserInput!): User
+        addTask(input: AddTaskInput!): Task
+        assignTask(task_id: ID!, user_id: ID!): Task
+        setStatus(task_id: ID!, status: TaskState!): Task
+        
+    }
+
+    input AddUserInput {
+        username: String!
+        login: String!
+        password:String!
+        role: Role!
+    }
+    input AddTaskInput {
+        title: String!
+        description: String!
+        due: String
+        status: TaskState
+        from: ID!
+    }
+`;
+const resolvers = {
+
+    Task:{
+        async from(parent){
+            return await User.findById(parent.from)
+        },
+        async to(parent){
+            return await User.findById(parent.to)
+        },
     },
-});
-
-const userType = new GraphQLObjectType({
-    name: 'User',
-    fields: () => ({
-        id: { type: GraphQLID },
-        username: { type: GraphQLString },
-        login:{type:GraphQLString},
-        password:{type:GraphQLString},
-    })
-});
-
-const taskType = new GraphQLObjectType({
-    name: 'Task',
-    fields: () => ({
-        id: { type: GraphQLID },
-        title: { type: GraphQLString },
-        description: { type: GraphQLString },
-        due: { 
-            type: GraphQLString,
-            resolve(parent,args){
-                const date = new Date(parent.due);
-                return date.toLocaleString();
-            } 
+    Query: {
+        async user(parent, args, contextValue, info) {
+            return await User.findById(args.id);
         },
-        status:{type:TaskStateEnumType},
-        from:{
-            type: userType,
-            resolve(parent,args){
-                return User.findById(parent.from)
-            }
+        async users(parent, args, contextValue, info) {
+            return await User.find({});
         },
-        to:{
-            type: userType,
-            resolve(parent,args){
-                return User.findById(parent.to)
-            }
-        }
-    })
-});
-
-const RootQuery = new GraphQLObjectType({
-    name: 'RootQueryType',
-    fields: {
-        user: {
-            type: userType,
-            args: { id: { type: GraphQLID } },
-            resolve(parent, args){
-                return User.findById(args.id);
-            }
+        async task(parent, args, contextValue, info) {
+            return await Task.findById(args.id);
         },
-        users: {
-            type: new GraphQLList(userType),
-            resolve(parent, args){
-                return User.find({});
-            }
+        async tasks(parent, args, contextValue, info) {
+            return await Task.find({});
         },
-        task: {
-            type: taskType,
-            args: { id: { type: GraphQLID } },
-            resolve(parent, args){
-                return Task.findById(args.id);
-            }
+        async myTasks(parent, args, contextValue, info) {
+            return await Task.find({to: args.id});
         },
-        tasks: {
-            type: new GraphQLList(taskType),
-            resolve(parent, args){
-                return Task.find({});
-            }
+       
+    },
+    Mutation: {
+        async addUser(_, {input}){
+            let user = new User({
+                ...input
+            });
+            return await user.save();
+        }, 
+        async addTask(_, {input}){
+            let task = new Task({
+                ...input
+            });
+            return await task.save();
         },
-        myTasks: {
-            type: new GraphQLList(taskType),
-            args: { id: { type: GraphQLID } },
-            resolve(parent, args){
-                return Task.find({to: args.id});
-            }
-        }
-    }
-});
-
-
-const Mutation = new GraphQLObjectType({
-    name: 'Mutation',
-    fields: {
-        addUser: {
-            type: userType,
-            args: {
-                username: { type: new GraphQLNonNull(GraphQLString) },
-                login: { type: new GraphQLNonNull(GraphQLString) },
-                password:{ type: new GraphQLNonNull(GraphQLString) }
-            },
-            resolve(parent, args){
-                let user = new User({
-                    username: args.username,
-                    login: args.login,
-                    password:args.password
-                });
-                return user.save();
-            }
-        },
-        addTask: {
-            type: taskType,
-            args: {
-                title: { type: new GraphQLNonNull(GraphQLString) },
-                description: { type: new GraphQLNonNull(GraphQLString) },
-                from: { type: new GraphQLNonNull(GraphQLID) },
-                due: {type: new GraphQLNonNull(GraphQLString)}
-            },
-            resolve(parent, args){
-                const date = new Date(args.due);
-
-                let task = new Task({
-                    title: args.title,
-                    description: args.description,
-                    from: args.from,
-                    status:args.status,
-                    due:date
-                });
-                return task.save();
-            }
-        },
-        assignTask: {
-            type: taskType,
-            args: {
-                task_id: { type: new GraphQLNonNull(GraphQLID) },
-                user_id: { type: new GraphQLNonNull(GraphQLID) },
-
-            },
-            resolve(parent, args){
-
-                return Task.findOneAndUpdate(
-                    {_id:args.task_id},
-                    {to:args.user_id}, 
-                    {new:true}
-                );
-            }
-        },
-        setStatus: {
-            type: taskType,
-            args: {
-                task_id: { type: new GraphQLNonNull(GraphQLID) },
-                status: { type: new GraphQLNonNull(TaskStateEnumType) },
-
-            },
-            resolve(parent, args){
-
-                return Task.findOneAndUpdate(
-                    {_id:args.task_id},
-                    {status:args.status}, 
-                    {new:true}
-                );
-            }
-        },
-    }
-});
-
-
-module.exports = new GraphQLSchema({
-    query: RootQuery,
-    mutation: Mutation
-});
-
-
+        async assignTask(_, {task_id, user_id}){
+            return await Task.findOneAndUpdate(
+                {_id: task_id},
+                {to: user_id}, 
+                {new: true}
+            );
+        } 
+    },
+}
+module.exports = {
+    typeDefs,
+    resolvers
+}
